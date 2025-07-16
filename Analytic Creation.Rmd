@@ -4,6 +4,16 @@ output: html_document
 date: "2025-06-17"
 ---
 
+#To date this is the capabilities of this code
+
+#Main parent group diagnosis, dim anxiety for young participant. Looks for diagnosis of ccMDD or ccBP, doesn't have hospital information yet though I believe
+
+#Need to do
+##Expand dim anxiety to all ages
+##Create dim dep group
+##Do other diagnosises 
+##Create value for different parent diagnoses
+
 ## Library
 ```{r setup, include=FALSE}
 library(haven); library(dplyr); library(tidyr); library(readr); library(readxl); library(data.table); library(stringr); library(purrr)  # Data manipulation & import
