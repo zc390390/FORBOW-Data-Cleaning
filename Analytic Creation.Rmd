@@ -179,3 +179,14 @@ FOR <- FOR %>%
 ```
 
 
+##Create my analytic now.
+```{r}
+setwd("C:/Users/hubshmz/Documents/Code/git/data")  # FORBOW computer
+# setwd("C:/Users/zachh/Documents/Code/git/Data")  # Laptop
+# setwd("C:/Users/zacha/Documents/RStudio/forbow/git/Data/ESCAP") # Tupper Windows Comp
+# setwd("C:/Users/zacha/Documents/forbow/code/git") # Home Computer
+
+save(FOR, file = "analytic-zach.RData")
+```
+
+
