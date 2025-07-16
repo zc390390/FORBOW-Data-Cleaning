@@ -1,0 +1,171 @@
+---
+title: "Pre-Analytic Cleaning+Imputation"
+output: html_document
+date: "2025-06-17"
+---
+
+## Library
+```{r setup, include=FALSE}
+library(haven); library(dplyr); library(tidyr); library(readr); library(readxl); library(data.table); library(stringr); library(purrr)  # Data manipulation & import
+library(lme4); library(lmerTest); library(coxme); library(survival); library(broom); library(MuMIn); library(lsmeans)  # Modeling & statistics
+library(pander); library(apaTables); library(flextable); library(officer); library(webshot2)  # Tables & reporting
+library(ggplot2)  # Plotting
+library(fuzzyjoin)  # Joins
+library(survminer)
+```
+
+## Load CSV
+```{r}
+setwd("C:/Users/hubshmz/Documents/Code/git/data")  # FORBOW computer
+# setwd("C:/Users/zachh/Documents/Code/git/Data")  # Laptop
+# setwd("C:/Users/zacha/Documents/RStudio/forbow/git/Data/ESCAP") # Tupper Windows Comp
+# setwd("C:/Users/zacha/Documents/forbow/code/git") # Home Computer
+
+FOR <- read.csv("FORBOWMasterDatabase-ChildhoodSleepAsAPre_DATA_2025-06-17_1301.csv")
+```
+
+```{r}
+FOR$fid <- substr(FOR$subject_id, 5, 7)
+FOR_P <- FOR %>%
+  filter(str_detect(subject_id, "F[1-3]|f[1-3]|M[1-3]|m[1-3]|\\$R"))
+
+
+FOR_P <- FOR_P %>%
+  mutate(group = case_when(
+    mdx == 4 ~ 1,
+    mdx %in% c(2, 3) ~ 2,
+    mdx == 1 ~ 3,
+    mdx == 0 ~ 0,
+    fdx == 4 ~ 1, 
+    fdx %in% c(2,3) ~ 2,
+    fdx == 1 ~ 3,
+    fdx == 0 ~ 0,
+    TRUE ~ NA_real_
+  ))
+
+FOR_P <- FOR_P %>%
+  group_by(subject_id) %>%
+  mutate(
+    group = {
+      g <- group[is.na(time_point)]
+      if (length(g) == 0 || is.na(g[1])) 0 else g[1]
+    }
+  ) %>%
+  ungroup()
+
+
+#Pure exploratory to see what kind of group combos we have 
+fid_groups <- FOR_P %>%
+  distinct(fid, group) %>%
+  group_by(fid) %>%
+  summarise(groups = list(sort(unique(group))), .groups = "drop")
+fid_groups <- fid_groups %>%
+  mutate(group_combo = sapply(groups, paste, collapse = "-"))
+combo_summary <- fid_groups %>%
+  count(group_combo) %>%
+  arrange(desc(n))
+
+print(combo_summary)
+```
+
+## Dimension Anxiety Creation
+```{r}
+Scared_C_Variables <- paste0("scared_child_", 1:41)
+Scared_P_Variables <- paste0("scared_parent_", 1:41)
+FOR <- FOR %>%
+  # Recode 9s to NA
+  mutate(across(all_of(Scared_C_Variables), ~na_if(.x, 9))) %>%
+  mutate(across(all_of(Scared_P_Variables), ~na_if(.x, 9))) %>%
+  
+  # Compute total scores
+  mutate(
+    Scared_C_Total = rowSums(across(all_of(Scared_C_Variables)), na.rm = TRUE),
+    Scared_P_Total = rowSums(across(all_of(Scared_P_Variables)), na.rm = TRUE)
+  ) %>%
+  
+  # Standardize total scores
+  mutate(
+    Scared_C_Total_z = as.numeric(scale(Scared_C_Total)),
+    Scared_P_Total_z = as.numeric(scale(Scared_P_Total))
+  )
+
+Scas_C_Variables <- paste0("scas_child_", 1:44)
+Scas_P_Variables <- paste0("scas_parent_", 1:38)
+
+remove_indices <- c(11, 17, 26, 31, 38, 43)
+Scas_C_Variables <- Scas_C_Variables[-remove_indices]
+
+
+FOR <- FOR %>%
+  # Recode 9s to NA
+  mutate(across(all_of(Scas_C_Variables), ~na_if(.x, 9))) %>%
+  mutate(across(all_of(Scas_P_Variables), ~na_if(.x, 9))) %>%
+  
+  # Compute total scores
+  mutate(
+    Scas_C_Total = rowSums(across(all_of(Scas_C_Variables)), na.rm = TRUE),
+    Scas_P_Total = rowSums(across(all_of(Scas_P_Variables)), na.rm = TRUE)
+  ) %>%
+  
+  # Standardize total scores
+  mutate(
+    Scas_C_z = as.numeric(scale(Scas_C_Total)),
+    Scas_P_z = as.numeric(scale(Scas_P_Total))
+  )
+
+FOR <- FOR %>%
+  # SCAS dimanx
+  mutate(dimanx = rowMeans(across(c(Scas_C_z, Scas_P_z, Scared_C_Total_z, Scared_P_Total_z)), na.rm = TRUE)) 
+
+FOR <- FOR %>%
+  group_by(subject_id) %>%
+  mutate(dob = dob[which(is.na(time_point))][1]) %>%
+  ungroup()
+FOR <- FOR %>%
+  group_by(subject_id) %>%
+  mutate(sex = sex[which(is.na(time_point))][1]) %>%
+  ungroup()
+FOR <- FOR %>%
+  mutate(sex = case_when(
+    sex == 1 ~ 0,
+    sex == 2 ~ 1
+  ))
+FOR <- FOR %>%
+  group_by(subject_id) %>%
+  filter(all(!is.na(dob) & dob != "")) %>%  # Keep only groups where *all* dob are not missing or empty
+  ungroup()
+invalid_si <- c("9999999888", "9999999998")
+FOR <- FOR %>%
+  filter(!subject_id %in% invalid_si)
+
+FOR$assessment_date <- as.Date(FOR$assessment_date)
+FOR$dob <- as.Date(FOR$dob)
+FOR$age_days <- FOR$assessment_date - FOR$dob
+FOR$age <- as.numeric(FOR$age_days) / 365.25
+```
+
+
+##ccMDD and BPD
+```{r}
+##doesn't have hospital onset
+Diagnosis_vars <- paste0("cd_c_dx_", 1:10)
+
+FOR <- FOR %>%
+  mutate(ccMDD = ifelse(rowSums(across(all_of(Diagnosis_vars)) == 1, na.rm = TRUE) > 0, 1, 0))
+
+FOR <- FOR %>%
+  mutate(ccBP = ifelse(rowSums(across(all_of(Diagnosis_vars), ~ . %in% c(4, 5)), na.rm = TRUE) > 0, 1, 0))
+
+FOR$round_age <- round(FOR$age)
+
+table(FOR$round_age, FOR$ccMDD)
+
+fid_group_list <- FOR_P %>%
+  group_by(fid) %>%
+  summarise(group = max(group, na.rm = TRUE), .groups = "drop")
+# Step 2: Join back to the full FOR dataset
+FOR <- FOR %>%
+  left_join(fid_group_list, by = "fid")
+```
+
+
